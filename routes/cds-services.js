@@ -13,6 +13,9 @@ const hooksLoader = require('../lib/hooks-loader');
 const libsLoader = require('../lib/libraries-loader');
 const cardLogger = require('../lib/card-logger');
 
+// Configurable timeout for external FHIR server requests (default: 30 seconds)
+const FHIR_REQUEST_TIMEOUT = parseInt(process.env.FHIR_REQUEST_TIMEOUT, 10) || 30000;
+
 // Middleware to setup response headers with CORS
 router.use((request, response, next) => {
   response.set({
@@ -152,9 +155,12 @@ async function call(req, res, next) {
         Object.keys(req.body.context || {}).forEach(contextKey => {
           searchURL = searchURL.split(`{{context.${contextKey}}}`).join(req.body.context[contextKey]);
         });
-        // Perform the search and add the response to the bundle
-        const searchRequest = client.request(searchURL, { pageLimit: 0, flat: true })
-          .then(result => addResponseToBundle(result, bundle));
+        // Perform the search and add the response to the bundle (with timeout)
+        const searchRequest = withTimeout(
+          client.request(searchURL, { pageLimit: 0, flat: true }),
+          FHIR_REQUEST_TIMEOUT,
+          `FHIR request to ${searchURL} timed out after ${FHIR_REQUEST_TIMEOUT}ms`
+        ).then(result => addResponseToBundle(result, bundle));
         // Push the promise onto the array so we can await it later
         searchRequests.push(searchRequest);
       } else {
@@ -427,6 +433,25 @@ function logError(err) {
   }
   const errString = err instanceof Error ? `${err.message}\n  ${err.stack}` : `${err}`;
   console.error((new Date()).toISOString(), 'ERROR:', errString);
+}
+
+/**
+ * Wraps a promise with a timeout. Rejects if the promise doesn't resolve within the specified time.
+ * @param {Promise} promise - The promise to wrap
+ * @param {number} ms - Timeout in milliseconds
+ * @param {string} message - Error message if timeout occurs
+ * @returns {Promise} - The wrapped promise
+ */
+function withTimeout(promise, ms, message) {
+  let timeoutId;
+  const timeoutPromise = new Promise((_, reject) => {
+    timeoutId = setTimeout(() => {
+      reject(new Error(message));
+    }, ms);
+  });
+  return Promise.race([promise, timeoutPromise]).finally(() => {
+    clearTimeout(timeoutId);
+  });
 }
 
 module.exports = router;

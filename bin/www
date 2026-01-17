@@ -64,6 +64,66 @@ server.on('error', onError);
 server.on('listening', onListening);
 
 /**
+ * Track active connections for graceful shutdown
+ */
+const connections = new Set();
+server.on('connection', (conn) => {
+  connections.add(conn);
+  conn.on('close', () => connections.delete(conn));
+});
+
+/**
+ * Graceful shutdown handler
+ */
+let isShuttingDown = false;
+function gracefulShutdown(signal) {
+  if (isShuttingDown) return;
+  isShuttingDown = true;
+  console.log(`\n${(new Date()).toISOString()} Received ${signal}. Starting graceful shutdown...`);
+
+  // Stop accepting new connections
+  server.close((err) => {
+    if (err) {
+      console.error(`${(new Date()).toISOString()} Error during server close:`, err);
+      process.exit(1);
+    }
+    console.log(`${(new Date()).toISOString()} Server closed. Exiting.`);
+    process.exit(0);
+  });
+
+  // Give existing connections time to complete (30 second timeout)
+  const shutdownTimeout = setTimeout(() => {
+    console.log(`${(new Date()).toISOString()} Forcing shutdown after timeout.`);
+    connections.forEach((conn) => conn.destroy());
+    process.exit(1);
+  }, 30000);
+  shutdownTimeout.unref();
+
+  // Close idle connections immediately
+  connections.forEach((conn) => {
+    if (!conn._httpMessage) {
+      conn.destroy();
+    }
+  });
+}
+
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+
+/**
+ * Process-level error handlers for uncaught exceptions and unhandled rejections
+ */
+process.on('uncaughtException', (err) => {
+  console.error(`${(new Date()).toISOString()} FATAL: Uncaught Exception:`, err);
+  gracefulShutdown('uncaughtException');
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+  console.error(`${(new Date()).toISOString()} ERROR: Unhandled Promise Rejection:`, reason);
+  // Log but don't exit - unhandled rejections are often recoverable
+});
+
+/**
  * Normalize a port into a number, string, or false.
  */
 
