@@ -6,7 +6,8 @@ const logger = require('morgan');
 const cookieParser = require('cookie-parser');
 const bodyParser = require('body-parser');
 const helmet = require('helmet');
-var cors = require('cors');
+const cors = require('cors');
+const rateLimit = require('express-rate-limit');
 
 const index = require('./routes/index');
 const apiLibrary = require('./routes/api/library');
@@ -16,6 +17,13 @@ const hooksLoader = require('./lib/hooks-loader');
 
 // Set up a default request size limit of 1mb, but allow it to be overridden via environment
 const limit = process.env.CQL_SERVICES_MAX_REQUEST_SIZE || '1mb';
+
+// Request timeout in milliseconds (default: 2 minutes)
+const REQUEST_TIMEOUT = parseInt(process.env.REQUEST_TIMEOUT, 10) || 120000;
+
+// Rate limiting configuration (configurable via environment)
+const RATE_LIMIT_WINDOW_MS = parseInt(process.env.RATE_LIMIT_WINDOW_MS, 10) || 60000; // 1 minute
+const RATE_LIMIT_MAX_REQUESTS = parseInt(process.env.RATE_LIMIT_MAX_REQUESTS, 10) || 100; // 100 requests per window
 
 const app = express();
 
@@ -40,6 +48,26 @@ app.use(bodyParser.urlencoded({
 }));
 app.use(cookieParser());
 app.use(express.static(path.join(__dirname, 'public')));
+
+// Rate limiting - apply to API routes only (not health checks)
+const apiLimiter = rateLimit({
+  windowMs: RATE_LIMIT_WINDOW_MS,
+  max: RATE_LIMIT_MAX_REQUESTS,
+  message: { error: 'Too many requests, please try again later.' },
+  standardHeaders: true,
+  legacyHeaders: false,
+  skip: (req) => req.app.get('env') === 'test' // Skip rate limiting in tests
+});
+
+// Request timeout middleware
+const requestTimeout = (req, res, next) => {
+  req.setTimeout(REQUEST_TIMEOUT, () => {
+    if (!res.headersSent) {
+      res.status(408).json({ error: 'Request timeout' });
+    }
+  });
+  next();
+};
 
 // Health check endpoint - basic liveness probe
 app.get('/health', (req, res) => {
@@ -67,21 +95,35 @@ app.get('/ready', (req, res) => {
 });
 
 app.use('/', index);
-app.use('/api/library', apiLibrary);
-app.use('/cds-services', cdsServices);
+app.use('/api/library', apiLimiter, requestTimeout, apiLibrary);
+app.use('/cds-services', apiLimiter, requestTimeout, cdsServices);
 
 // error handler
 app.use((err, req, res, next) => {
   // Log the error
   console.error((new Date()).toISOString(), `ERROR: ${err.message}\n  ${err.stack}`);
 
-  // set locals, only providing error in development
-  res.locals.message = err.message;
-  res.locals.error = req.app.get('env') === 'development' ? err : {};
+  const status = err.status || 500;
+  const isApiRequest = req.path.startsWith('/api/') || req.path.startsWith('/cds-services');
 
-  // render the error page
-  res.status(err.status || 500);
-  res.render('error');
+  // Return JSON for API requests, render error page for others
+  if (isApiRequest || req.accepts('json')) {
+    const errorResponse = {
+      error: err.message || 'Internal Server Error',
+      status: status
+    };
+    // Include stack trace in development
+    if (req.app.get('env') === 'development') {
+      errorResponse.stack = err.stack;
+    }
+    res.status(status).json(errorResponse);
+  } else {
+    // Render error page for browser requests
+    res.locals.message = err.message;
+    res.locals.error = req.app.get('env') === 'development' ? err : {};
+    res.status(status);
+    res.render('error');
+  }
 });
 
 module.exports = app;
