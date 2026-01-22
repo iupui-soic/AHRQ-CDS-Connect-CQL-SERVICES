@@ -49,6 +49,9 @@ function discover(req, res, next) {
  * Puts resulting hook definition and library in `res.locals`.
  */
 function resolver(req, res, next) {
+  // Check for library changes and reload if needed (hot-reload support)
+  libsLoader.checkAndReloadIfNeeded();
+
   // Check to ensure required properties are present
   if (!req.body.hook || !req.body.hookInstance || !req.body.context) {
     sendError(res, 400, 'Invalid request. Missing at least one required field from: hook, hookInstance, context.');

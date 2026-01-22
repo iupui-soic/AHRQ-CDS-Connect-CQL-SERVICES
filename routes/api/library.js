@@ -19,6 +19,9 @@ router.post('/:library/version/:version', resolver, valuesetter, execute);
  * Puts resulting library and expression name in `res.locals`.
  */
 function resolver(req, res, next) {
+  // Check for library changes and reload if needed (hot-reload support)
+  libsLoader.checkAndReloadIfNeeded();
+
   // Load the library
   let lib;
   if (typeof req.params.version === 'undefined') {
