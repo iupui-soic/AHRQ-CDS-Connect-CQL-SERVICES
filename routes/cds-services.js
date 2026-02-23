@@ -39,6 +39,8 @@ router.post('/:id/feedback', feedback);
  * @see {@link https://cds-hooks.hl7.org/2.0/#discovery|Discovery}
  */
 function discover(req, res, next) {
+  // Check for hook/library changes and reload if needed (hot-reload support)
+  hooksLoader.checkAndReloadIfNeeded();
   res.json({
     services: hooksLoader.get().all(true)
   });
@@ -49,8 +51,8 @@ function discover(req, res, next) {
  * Puts resulting hook definition and library in `res.locals`.
  */
 function resolver(req, res, next) {
-  // Check for library changes and reload if needed (hot-reload support)
-  libsLoader.checkAndReloadIfNeeded();
+  // Check for hook/library changes and reload if needed (hot-reload support)
+  hooksLoader.checkAndReloadIfNeeded();
 
   // Check to ensure required properties are present
   if (!req.body.hook || !req.body.hookInstance || !req.body.context) {

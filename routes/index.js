@@ -7,8 +7,8 @@ const router = express.Router();
 
 /* GET home page. */
 router.get('/', (req, res, next) => {
-  // Check for library changes and reload if needed (hot-reload support)
-  libsLoader.checkAndReloadIfNeeded();
+  // Check for hook/library changes and reload if needed (hot-reload support)
+  hooksLoader.checkAndReloadIfNeeded();
   const libraries = libsLoader.get().all();
   const expressions = {};
   for (const lib of libraries) {
